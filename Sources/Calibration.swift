@@ -2,22 +2,26 @@ import AppKit
 import Carbon.HIToolbox
 
 /// Shows red dots around the screen. Look at each one and tap Space: the gaze from just before
-/// the tap is saved for that spot and the dot turns green.
+/// the tap is saved for that spot and the dot turns green. The last 4 dots check the accuracy.
 final class Calibration {
+    private static let checks = 4
     private let window = KeyWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
     private let dot = NSView(frame: NSRect(x: 0, y: 0, width: 30, height: 30))
     private let label = NSTextField(labelWithString: "")
     private let tracker: Tracker
-    private let done: (GazeMap?, Double) -> Void
+    private let done: ([GazeSample]?, Double, Double) -> Void
     private var spots: [CGPoint] = []
-    private var features: [CGPoint] = []
+    private var saved: [GazeSample] = []
+    private var errors: [Double] = []
+    private var model: GazeModel?
     private var open: [Double] = []
-    private var samples: [(time: TimeInterval, gaze: CGPoint, open: Double)] = []
+    private var recent: [(time: TimeInterval, gaze: Gaze, open: Double)] = []
     private var monitor: Any?
     private var saving = false
 
-    /// `done` gets the fitted map (nil if it failed) and the open-eye baseline used to detect blinks.
-    init(tracker: Tracker, done: @escaping (GazeMap?, Double) -> Void) {
+    /// `done` gets the samples (nil if it failed), the open-eye baseline used to detect blinks,
+    /// and the average miss on the check dots in points.
+    init(tracker: Tracker, done: @escaping ([GazeSample]?, Double, Double) -> Void) {
         self.tracker = tracker
         self.done = done
         let frame = NSScreen.screens[0].frame  // shortcut: main display only, calibrate per display for multi-monitor
@@ -29,6 +33,9 @@ final class Calibration {
             let y = area.minY + (CGFloat(i / cols) + CGFloat.random(in: 0.1...0.9)) * cellHeight
             return CGPoint(x: x, y: y)
         }.shuffled()
+        spots += (0..<Calibration.checks).map { _ in
+            CGPoint(x: CGFloat.random(in: area.minX...area.maxX), y: CGFloat.random(in: area.minY...area.maxY))
+        }
 
         window.setFrame(frame, display: false)
         window.level = .screenSaver
@@ -47,8 +54,8 @@ final class Calibration {
         tracker.onSample = { [weak self] gaze, open in
             guard let self else { return }
             let now = ProcessInfo.processInfo.systemUptime
-            self.samples.append((now, gaze, open))
-            self.samples.removeAll { now - $0.time > 1 }
+            self.recent.append((now, gaze, open))
+            self.recent.removeAll { now - $0.time > 1 }
         }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard Int(event.keyCode) == kVK_Space else { return event }  // Esc and other keys pass through
@@ -66,38 +73,60 @@ final class Calibration {
         window.orderOut(nil)
     }
 
+    private var checking: Bool { saved.count >= spots.count - Calibration.checks }
+
     private func show() {
-        let spot = spots[features.count]
+        let spot = spots[saved.count]
         dot.layer?.backgroundColor = NSColor.systemRed.cgColor
         dot.setFrameOrigin(NSPoint(x: spot.x - 15, y: spot.y - 15))
-        say("Look at the red dot and tap Space (\(features.count + 1) of \(spots.count)) · Esc stops")
+        if checking {
+            let n = saved.count - (spots.count - Calibration.checks) + 1
+            say("Checking accuracy: look at the red dot and tap Space (\(n) of \(Calibration.checks)) · Esc stops")
+        } else {
+            say("Look at the red dot and tap Space (\(saved.count + 1) of \(spots.count - Calibration.checks)) · Esc stops")
+        }
     }
 
     private func save() {
         guard !saving else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        let recent = samples.filter { now - $0.time <= 0.5 }  // while you were looking at the dot
-        guard recent.count >= 5 else {
+        let looks = recent.filter { now - $0.time <= 0.5 }  // while you were looking at the dot
+        guard looks.count >= 5 else {
             return say("Couldn't see your eyes. Check the light, look at the dot and tap Space again.")
         }
-        features.append(CGPoint(x: median(recent.map { $0.gaze.x }), y: median(recent.map { $0.gaze.y })))
-        open += recent.map { $0.open }
+        // Window points have a bottom-left origin; the pointer uses top-left.
+        let spot = spots[saved.count]
+        let sample = GazeSample(gaze: medianGaze(looks.map { $0.gaze }), target: CGPoint(x: spot.x, y: window.frame.height - spot.y))
+        if checking, let model { errors.append(model.error(sample)) }
+        saved.append(sample)
+        open += looks.map { $0.open }
+        if saved.count == spots.count - Calibration.checks {
+            model = GazeModel(samples: saved)
+            guard model != nil else { return finish() }
+        }
         saving = true
         dot.layer?.backgroundColor = NSColor.systemGreen.cgColor
         say("Saved")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             guard self.monitor != nil else { return }  // stopped with Esc meanwhile
             self.saving = false
-            if self.features.count < self.spots.count { self.show() } else { self.finish() }
+            if self.saved.count < self.spots.count { self.show() } else { self.finish() }
         }
     }
 
     private func finish() {
-        // Window points have a bottom-left origin; the pointer uses top-left.
-        let height = window.frame.height
-        let map = GazeMap(features: features, targets: spots.map { CGPoint(x: $0.x, y: height - $0.y) })
-        cancel()
-        done(map, median(open))
+        guard model != nil, !errors.isEmpty else {
+            cancel()
+            return done(nil, 0, 0)
+        }
+        let accuracy = errors.reduce(0, +) / Double(errors.count)
+        dot.isHidden = true
+        say("Done. Accuracy: about \(Int(accuracy)) points (lower is better)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard self.monitor != nil else { return }
+            self.cancel()
+            self.done(self.saved, median(self.open), accuracy)
+        }
     }
 
     private func say(_ text: String) {
@@ -111,5 +140,3 @@ final class Calibration {
 private final class KeyWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 }
-
-private func median<T: Comparable>(_ values: [T]) -> T { values.sorted()[values.count / 2] }

@@ -1,47 +1,99 @@
 import CoreGraphics
 import Foundation
 
-/// Least-squares quadratic map from gaze features to screen points. Curved because the eyes rotate,
-/// so the same eye movement covers more screen toward the edges.
-struct GazeMap: Codable {
-    private var center: [Double]  // features are centered and scaled so the fit works on numbers near 1
-    private var scale: Double
-    private var cx: [Double]
-    private var cy: [Double]
+/// One look: where the iris sits inside the eye, plus where the head is and how it's turned.
+struct Gaze: Codable {
+    var eye: CGPoint
+    var head: [Double]  // face center x and y as fractions of the frame, then yaw and pitch in radians
+}
 
-    /// Needs 6 or more points. Fails when the features don't spread out (the eyes never moved).
-    init?(features: [CGPoint], targets: [CGPoint]) {
-        guard features.count >= 6, features.count == targets.count else { return nil }
-        let n = Double(features.count)
-        let c = [features.reduce(0) { $0 + Double($1.x) } / n, features.reduce(0) { $0 + Double($1.y) } / n]
-        let s = features.map { hypot(Double($0.x) - c[0], Double($0.y) - c[1]) }.max() ?? 0
-        guard s > 1e-9 else { return nil }
-        var a = [[Double]](repeating: [Double](repeating: 0, count: 6), count: 6)
-        var bx = [Double](repeating: 0, count: 6), by = bx
-        for (f, t) in zip(features, targets) {
-            let r = quadratic(f, c, s)
-            for i in 0..<6 {
-                for j in 0..<6 { a[i][j] += r[i] * r[j] }
-                bx[i] += r[i] * Double(t.x)
-                by[i] += r[i] * Double(t.y)
-            }
-        }
-        guard let cx = solve(a, bx), let cy = solve(a, by) else { return nil }
-        center = c
-        scale = s
+/// A look paired with the screen point it was at, from calibration or learned from your clicks.
+struct GazeSample: Codable {
+    var gaze: Gaze
+    var target: CGPoint
+    var learned = false
+}
+
+/// Middle value of each number across several frames, steadier than any single frame.
+func medianGaze(_ looks: [Gaze]) -> Gaze {
+    Gaze(eye: CGPoint(x: median(looks.map { Double($0.eye.x) }), y: median(looks.map { Double($0.eye.y) })),
+         head: (0..<4).map { i in median(looks.map { $0.head[i] }) })
+}
+
+func median(_ values: [Double]) -> Double { values.sorted()[values.count / 2] }
+
+/// Maps a look to a screen point with ridge regression, the way WebGazer learns from clicks.
+/// Curved in the eyes (they rotate, so the same eye movement covers more screen toward the edges),
+/// plus a straight-line head correction. The ridge penalty keeps the head part near zero until
+/// learned samples show how moving your head shifts where you're looking.
+struct GazeModel {
+    private static let headScale = [0.05, 0.05, 0.1, 0.1]  // a typical head move: 5% of the frame, about 6°
+    private static let eyeRidge = 1e-3, headRidge = 0.01  // per sample
+    private let mean: [Double]
+    private let scale: [Double]
+    private let cx: [Double]
+    private let cy: [Double]
+
+    /// Needs 6 or more samples. Fails when the eyes didn't move in two directions. After a first fit,
+    /// samples far off the rest (a click while looking elsewhere) are dropped and it fits again.
+    init?(samples: [GazeSample]) {
+        guard let first = GazeModel.fit(samples) else { return nil }
+        let limit = max(3 * median(samples.map(first.error)), 40)
+        let kept = samples.filter { first.error($0) <= limit }
+        self = kept.count < samples.count ? GazeModel.fit(kept) ?? first : first
+    }
+
+    private init(mean: [Double], scale: [Double], cx: [Double], cy: [Double]) {
+        self.mean = mean
+        self.scale = scale
         self.cx = cx
         self.cy = cy
     }
 
-    func apply(_ p: CGPoint) -> CGPoint {
-        let r = quadratic(p, center, scale)
+    func apply(_ gaze: Gaze) -> CGPoint {
+        let r = terms(gaze, mean, scale)
         return CGPoint(x: zip(r, cx).reduce(0) { $0 + $1.0 * $1.1 }, y: zip(r, cy).reduce(0) { $0 + $1.0 * $1.1 })
+    }
+
+    /// How far off the model is for this sample, in points.
+    func error(_ sample: GazeSample) -> Double {
+        let p = apply(sample.gaze)
+        return Double(hypot(p.x - sample.target.x, p.y - sample.target.y))
+    }
+
+    private static func fit(_ samples: [GazeSample]) -> GazeModel? {
+        guard samples.count >= 6 else { return nil }
+        let n = Double(samples.count)
+        let columns = samples.map { [Double($0.gaze.eye.x), Double($0.gaze.eye.y)] + $0.gaze.head }
+        let mean: [Double] = (0..<6).map { i in columns.reduce(0.0) { $0 + $1[i] } / n }
+        let sx: Double = (columns.reduce(0.0) { $0 + pow($1[0] - mean[0], 2) } / n).squareRoot()
+        let sy: Double = (columns.reduce(0.0) { $0 + pow($1[1] - mean[1], 2) } / n).squareRoot()
+        guard sx > 1e-9, sy > 1e-9 else { return nil }
+        let r: Double = columns.reduce(0.0) { $0 + ($1[0] - mean[0]) * ($1[1] - mean[1]) } / n / (sx * sy)
+        guard abs(r) < 0.99 else { return nil }  // eyes moved along one line only
+        let scale = [sx, sy] + headScale
+        var a = [[Double]](repeating: [Double](repeating: 0, count: 10), count: 10)
+        var bx = [Double](repeating: 0, count: 10), by = bx
+        for sample in samples {
+            let t = terms(sample.gaze, mean, scale)
+            for i in 0..<10 {
+                for j in 0..<10 { a[i][j] += t[i] * t[j] }
+                bx[i] += t[i] * Double(sample.target.x)
+                by[i] += t[i] * Double(sample.target.y)
+            }
+        }
+        for i in 1..<10 { a[i][i] += n * (i < 6 ? eyeRidge : headRidge) }
+        guard let cx = solve(a, bx), let cy = solve(a, by) else { return nil }
+        return GazeModel(mean: mean, scale: scale, cx: cx, cy: cy)
     }
 }
 
-private func quadratic(_ p: CGPoint, _ c: [Double], _ s: Double) -> [Double] {
-    let x = (Double(p.x) - c[0]) / s, y = (Double(p.y) - c[1]) / s
-    return [1, x, y, x * y, x * x, y * y]
+/// Curved terms for the eyes, straight-line terms for the head, each centered and scaled near 1.
+private func terms(_ gaze: Gaze, _ mean: [Double], _ scale: [Double]) -> [Double] {
+    let values = [Double(gaze.eye.x), Double(gaze.eye.y)] + gaze.head
+    let z = (0..<values.count).map { (values[$0] - mean[$0]) / scale[$0] }
+    let x = z[0], y = z[1]
+    return [1, x, y, x * y, x * x, y * y] + z[2...]
 }
 
 /// Gauss-Jordan elimination with partial pivoting; nil when the system is (nearly) singular.

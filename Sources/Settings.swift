@@ -10,6 +10,8 @@ struct SettingsView: View {
     @AppStorage("hotKeyCode") private var keyCode = kVK_ANSI_E
     @AppStorage("hotKeyMods") private var mods = controlKey | optionKey
     @AppStorage("hotKeyName") private var keyName = "E"
+    @AppStorage("calibrationAccuracy") private var calibrationAccuracy = 0.0
+    @AppStorage("recentAccuracy") private var recentAccuracy = 0.0
     @State private var monitor: Any?  // set while recording a shortcut
     let recalibrate: () -> Void
     let shortcutChanged: () -> Void
@@ -26,6 +28,13 @@ struct SettingsView: View {
             Text("The pointer only moves when your eyes move farther than \(Int(holdRadius)) points. Blink twice to left click, three times to right click. Esc always stops Vizor.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if calibrationAccuracy > 0 {
+                LabeledContent("Accuracy") {
+                    Text(recentAccuracy > 0
+                         ? "about \(Int(recentAccuracy)) points from your recent clicks (\(Int(calibrationAccuracy)) after calibrating)"
+                         : "about \(Int(calibrationAccuracy)) points after calibrating; it improves as you click")
+                }
+            }
             Button("Recalibrate…", action: recalibrate)
         }
         .padding(20)

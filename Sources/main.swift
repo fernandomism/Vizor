@@ -10,11 +10,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var calibration: Calibration?
     private var settings: NSWindow?
     private var hotKey: EventHotKeyRef?
-    private var escape: [Any] = []
+    private var monitors: [Any] = []
     private var active = false
 
-    private var savedMap: GazeMap? {
-        UserDefaults.standard.data(forKey: "gazeMap").flatMap { try? JSONDecoder().decode(GazeMap.self, from: $0) }
+    /// Calibration dots plus what's been learned from clicks; nil until a calibration that works.
+    private var savedSamples: [GazeSample]? {
+        let samples = UserDefaults.standard.data(forKey: "gazeSamples").flatMap { try? JSONDecoder().decode([GazeSample].self, from: $0) }
+        return samples.flatMap { GazeModel(samples: $0) } == nil ? nil : samples
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -51,8 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func toggle() {
         if active { return stop() }
         withCamera {
-            if let map = self.savedMap {
-                self.tracker?.setMap(map)
+            if let samples = self.savedSamples {
+                self.tracker?.use(samples)
                 self.setActive(true)
             } else {
                 self.runCalibration()
@@ -69,15 +71,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setActive(false)
     }
 
-    /// Esc always stops Vizor, whichever app is in front. Seeing other apps' keys needs the
-    /// Accessibility permission, so this is set up once that's granted.
-    private func watchEscape() {
-        guard escape.isEmpty else { return }
+    /// Esc always stops Vizor, whichever app is in front, and real clicks teach it where you look.
+    /// Seeing other apps' keys and clicks needs the Accessibility permission, so this waits for it.
+    private func watchInput() {
+        guard monitors.isEmpty else { return }
         let stopOnEscape: (NSEvent) -> Void = { event in
             if Int(event.keyCode) == kVK_Escape { self.stop() }
         }
-        escape = [NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: stopOnEscape),
-                  NSEvent.addLocalMonitorForEvents(matching: .keyDown) { stopOnEscape($0); return $0 }].compactMap { $0 }
+        monitors = [NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: stopOnEscape),
+                    NSEvent.addLocalMonitorForEvents(matching: .keyDown) { stopOnEscape($0); return $0 },
+                    NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { _ in
+                        self.tracker?.userClicked()
+                    }].compactMap { $0 }
     }
 
     private func setActive(_ on: Bool) {
@@ -91,7 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func withCamera(_ then: @escaping () -> Void) {
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         guard AXIsProcessTrustedWithOptions(prompt) else { return }  // macOS shows its own Accessibility prompt
-        watchEscape()
+        watchInput()
         AVCaptureDevice.requestAccess(for: .video) { granted in
             DispatchQueue.main.async {
                 guard granted else {
@@ -113,17 +118,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func runCalibration() {
         guard calibration == nil, let tracker else { return }
-        tracker.setMap(nil)
-        calibration = Calibration(tracker: tracker) { map, open in
+        tracker.use(nil)
+        calibration = Calibration(tracker: tracker) { samples, open, accuracy in
             self.calibration = nil
-            if let map {
-                UserDefaults.standard.set(try? JSONEncoder().encode(map), forKey: "gazeMap")
+            if let samples {
+                // A fresh calibration starts learning over, so nothing learned at an old seat lingers.
+                UserDefaults.standard.set(try? JSONEncoder().encode(samples), forKey: "gazeSamples")
                 UserDefaults.standard.set(open, forKey: "openBaseline")
+                UserDefaults.standard.set(accuracy, forKey: "calibrationAccuracy")
+                UserDefaults.standard.removeObject(forKey: "recentAccuracy")
             } else {
                 self.alert("Calibration didn't work. Face the camera in good light, keep your head still and follow the dot with your eyes.")
                 guard self.active else { return self.setActive(false) }  // otherwise keep the previous calibration
             }
-            tracker.setMap(self.savedMap)
+            tracker.use(self.savedSamples)
             self.setActive(true)
         }
     }

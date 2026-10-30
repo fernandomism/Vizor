@@ -2,30 +2,55 @@ import CoreGraphics
 
 // Run: swiftc Sources/Gaze.swift Tests/main.swift -o /tmp/vizor-selftest && /tmp/vizor-selftest
 
-// The fit recovers a known curved map from 12 calibration dots on a jittered 4×3 grid.
-func gridDot(_ i: Int) -> CGPoint {
-    let x: Double = -0.1 + 0.2 * Double(i % 4) / 3 + 0.003 * Double(i % 5)
-    let y: Double = -0.08 + 0.08 * Double(i / 4) - 0.002 * Double(i % 3)
-    return CGPoint(x: x, y: y)
+// A made-up face: screen point = curved function of the eyes + a shift from moving the head.
+func look(_ x: Double, _ y: Double, headX: Double = 0.5, headY: Double = 0.5) -> Gaze {
+    Gaze(eye: CGPoint(x: x, y: y), head: [headX, headY, 0, 0])
 }
-func truth(_ p: CGPoint) -> CGPoint {
-    let x = Double(p.x), y = Double(p.y)
-    let screenX: Double = 720 + 7000 * x + 300 * y + 9000 * x * x
-    let screenY: Double = 450 - 200 * x + 5000 * y + 4000 * x * y
+func truth(_ g: Gaze) -> CGPoint {
+    let x = Double(g.eye.x), y = Double(g.eye.y)
+    let screenX: Double = 720 + 7000 * x + 300 * y + 9000 * x * x + 3000 * (g.head[0] - 0.5)
+    let screenY: Double = 450 - 200 * x + 5000 * y + 4000 * x * y + 2000 * (g.head[1] - 0.5)
     return CGPoint(x: screenX, y: screenY)
 }
-let features = (0..<12).map(gridDot)
-let map = GazeMap(features: features, targets: features.map(truth))!
-for p in [CGPoint(x: 0.05, y: -0.02), CGPoint(x: -0.07, y: 0.06)] {
-    let got = map.apply(p), want = truth(p)
-    precondition(abs(got.x - want.x) < 1e-4 && abs(got.y - want.y) < 1e-4, "fit is off at \(p)")
+func gridDot(_ i: Int) -> Gaze {
+    let x: Double = -0.1 + 0.2 * Double(i % 4) / 3 + 0.003 * Double(i % 5)
+    let y: Double = -0.08 + 0.08 * Double(i / 4) - 0.002 * Double(i % 3)
+    return look(x, y)
 }
-precondition(GazeMap(features: Array(repeating: CGPoint(x: 0.01, y: 0.02), count: 12), targets: features.map(truth)) == nil,
+func samples(_ looks: [Gaze]) -> [GazeSample] { looks.map { GazeSample(gaze: $0, target: truth($0)) } }
+func missBy(_ model: GazeModel, _ g: Gaze) -> Double {
+    let got = model.apply(g), want = truth(g)
+    return Double(hypot(got.x - want.x, got.y - want.y))
+}
+func wobble(_ i: Int, _ k: Double) -> Double { sin(Double(i) * k) }  // repeatable stand-in for randomness
+
+// Calibration with a still head recovers the curved eye map from 12 dots.
+let calibration = samples((0..<12).map(gridDot))
+let calibrated = GazeModel(samples: calibration)!
+for g in [look(0.05, -0.02), look(-0.07, 0.06)] { precondition(missBy(calibrated, g) < 2, "calibration fit is off") }
+precondition(GazeModel(samples: samples(Array(repeating: look(0.01, 0.02), count: 12))) == nil,
              "eyes that never moved must fail calibration")
-precondition(GazeMap(features: features.map { CGPoint(x: $0.x, y: $0.x) }, targets: features.map(truth)) == nil,
+precondition(GazeModel(samples: samples((0..<12).map { look(Double(gridDot($0).eye.x), Double(gridDot($0).eye.x)) })) == nil,
              "eyes that moved along one line only can't map the whole screen")
-precondition(GazeMap(features: Array(features.prefix(5)), targets: Array(features.prefix(5)).map(truth)) == nil,
-             "a curved fit needs at least 6 dots")
+precondition(GazeModel(samples: Array(calibration.prefix(5))) == nil, "needs at least 6 dots")
+
+// Learned clicks with the head moving teach the model how head movement shifts the gaze.
+let headMoved = look(0.02, 0.01, headX: 0.53, headY: 0.47)
+let clicksWithHeadMoving = samples((0..<40).map { i in
+    look(0.1 * wobble(i, 1.3), 0.08 * wobble(i, 2.1), headX: 0.5 + 0.05 * wobble(i, 0.7), headY: 0.5 + 0.05 * wobble(i, 1.9))
+})
+precondition(missBy(calibrated, headMoved) > 50, "a moved head should throw off calibration alone")
+precondition(missBy(GazeModel(samples: calibration + clicksWithHeadMoving)!, headMoved) < 10, "learning corrects for head movement")
+
+// Clicks correct a calibration that came out 80 points off.
+let biased = calibration.map { GazeSample(gaze: $0.gaze, target: CGPoint(x: $0.target.x + 80, y: $0.target.y)) }
+let clicks = samples((0..<30).map { i in look(0.1 * wobble(i, 0.9), 0.08 * wobble(i, 1.7)) })
+precondition(missBy(GazeModel(samples: biased)!, look(0.03, 0.02)) > 60, "the bias shows before learning")
+precondition(missBy(GazeModel(samples: biased + clicks)!, look(0.03, 0.02)) < 25, "learning from clicks fixes the bias")
+
+// A click made while looking somewhere else is dropped instead of skewing everything.
+let withOutlier = calibration + [GazeSample(gaze: gridDot(5), target: CGPoint(x: 5000, y: -3000), learned: true)]
+precondition(missBy(GazeModel(samples: withOutlier)!, look(0.05, -0.02)) < 2, "an outlier must be ignored")
 
 // Blinks at 30 fps: eyes closed during the given time ranges.
 func blinks(_ closed: [ClosedRange<Double>]) -> [Int] {
