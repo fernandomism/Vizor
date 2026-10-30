@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var calibration: Calibration?
     private var settings: NSWindow?
     private var hotKey: EventHotKeyRef?
+    private var escape: [Any] = []
     private var active = false
 
     private var savedMap: GazeMap? {
@@ -48,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func toggle() {
-        if active { return setActive(false) }
+        if active { return stop() }
         withCamera {
             if let map = self.savedMap {
                 self.tracker?.setMap(map)
@@ -61,6 +62,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func calibrate() { withCamera { self.runCalibration() } }
 
+    /// Turns everything off: pointer, camera and any calibration in progress.
+    private func stop() {
+        calibration?.cancel()
+        calibration = nil
+        setActive(false)
+    }
+
+    /// Esc always stops Vizor, whichever app is in front. Seeing other apps' keys needs the
+    /// Accessibility permission, so this is set up once that's granted.
+    private func watchEscape() {
+        guard escape.isEmpty else { return }
+        let stopOnEscape: (NSEvent) -> Void = { event in
+            if Int(event.keyCode) == kVK_Escape { self.stop() }
+        }
+        escape = [NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: stopOnEscape),
+                  NSEvent.addLocalMonitorForEvents(matching: .keyDown) { stopOnEscape($0); return $0 }].compactMap { $0 }
+    }
+
     private func setActive(_ on: Bool) {
         active = on
         if !on { tracker?.stop() }
@@ -72,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func withCamera(_ then: @escaping () -> Void) {
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         guard AXIsProcessTrustedWithOptions(prompt) else { return }  // macOS shows its own Accessibility prompt
+        watchEscape()
         AVCaptureDevice.requestAccess(for: .video) { granted in
             DispatchQueue.main.async {
                 guard granted else {
@@ -141,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 UserDefaults.standard.register(defaults: [
-    "smoothing": 0.8, "blinkWindow": 0.5, "blinkThreshold": 0.55,
+    "smoothing": 0.8, "blinkWindow": 0.5, "blinkThreshold": 0.55, "holdRadius": 50.0,
     "hotKeyCode": kVK_ANSI_E, "hotKeyMods": controlKey | optionKey, "hotKeyName": "E",
 ])
 let app = NSApplication.shared

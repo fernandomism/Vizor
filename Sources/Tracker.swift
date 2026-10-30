@@ -15,7 +15,9 @@ final class Tracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     // Only touched on `queue`.
     private var map: GazeMap?
     private var blinks = BlinkCounter()
-    private var cursor: CGPoint?
+    private var hold = PointerHold()
+    private var aim: CGPoint?  // smoothed gaze on screen
+    private var cursor: CGPoint?  // where Vizor last put the pointer
 
     init(camera: AVCaptureDevice) throws {
         guard let model = Bundle.main.url(forResource: "IrisLandmark", withExtension: "mlpackage") else {
@@ -38,7 +40,14 @@ final class Tracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     func stop() { queue.async { self.session.stopRunning() } }
 
     /// nil pauses the pointer (during calibration).
-    func setMap(_ map: GazeMap?) { queue.async { self.map = map; self.cursor = nil } }
+    func setMap(_ map: GazeMap?) {
+        queue.async {
+            self.map = map
+            self.aim = nil
+            self.cursor = nil
+            self.hold = PointerHold()
+        }
+    }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixels = CMSampleBufferGetImageBuffer(sample) else { return }
@@ -66,7 +75,15 @@ final class Tracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         guard !blinks.pending else { return }  // hold the pointer still so the click lands where you looked
 
         let target = map.apply(gaze), keep = CGFloat(settings.double(forKey: "smoothing"))
-        let p = cursor.map { CGPoint(x: $0.x + (1 - keep) * (target.x - $0.x), y: $0.y + (1 - keep) * (target.y - $0.y)) } ?? target
+        let aim = self.aim.map { CGPoint(x: $0.x + (1 - keep) * (target.x - $0.x), y: $0.y + (1 - keep) * (target.y - $0.y)) } ?? target
+        self.aim = aim
+        if let cursor, let now = CGEvent(source: nil)?.location, hypot(now.x - cursor.x, now.y - cursor.y) > 3 {
+            hold.rest(at: aim)  // moved by hand: leave it there until the eyes really move
+            self.cursor = now
+            return
+        }
+        hold.radius = settings.double(forKey: "holdRadius")
+        guard let p = hold.update(aim) else { return }  // eyes haven't really moved: keep the pointer still
         let screen = CGDisplayBounds(CGMainDisplayID())  // shortcut: main display only, calibrate per display for multi-monitor
         let moved = CGPoint(x: min(max(p.x, screen.minX), screen.maxX - 1), y: min(max(p.y, screen.minY), screen.maxY - 1))
         cursor = moved

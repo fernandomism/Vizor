@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage("smoothing") private var smoothing = 0.8
     @AppStorage("blinkWindow") private var blinkWindow = 0.5
     @AppStorage("blinkThreshold") private var blinkThreshold = 0.55
+    @AppStorage("holdRadius") private var holdRadius = 50.0
     @AppStorage("hotKeyCode") private var keyCode = kVK_ANSI_E
     @AppStorage("hotKeyMods") private var mods = controlKey | optionKey
     @AppStorage("hotKeyName") private var keyName = "E"
@@ -19,9 +20,10 @@ struct SettingsView: View {
                 Button(monitor != nil ? "Type a shortcut… (Esc cancels)" : shortcut) { record() }
             }
             Slider(value: $smoothing, in: 0...0.95) { Text("Pointer smoothing") }
+            Slider(value: $holdRadius, in: 10...150) { Text("Hold still within") }
             Slider(value: $blinkThreshold, in: 0.3...0.8) { Text("Blink sensitivity") }
             Slider(value: $blinkWindow, in: 0.3...1) { Text("Time between blinks") }
-            Text("Blink twice to left click, three times to right click.")
+            Text("The pointer only moves when your eyes move farther than \(Int(holdRadius)) points. Blink twice to left click, three times to right click. Esc always stops Vizor.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Button("Recalibrate…", action: recalibrate)
