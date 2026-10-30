@@ -23,9 +23,11 @@ final class Calibration {
         let frame = NSScreen.screens[0].frame  // shortcut: main display only, calibrate per display for multi-monitor
         // One random spot in each cell of a 4×3 grid: center, halfway and edges, in shuffled order.
         let area = frame.insetBy(dx: 30, dy: 30), cols = 4, rows = 3
-        spots = (0..<cols * rows).map { i in
-            CGPoint(x: area.minX + (CGFloat(i % cols) + .random(in: 0.1...0.9)) * area.width / CGFloat(cols),
-                    y: area.minY + (CGFloat(i / cols) + .random(in: 0.1...0.9)) * area.height / CGFloat(rows))
+        let cellWidth = area.width / CGFloat(cols), cellHeight = area.height / CGFloat(rows)
+        spots = (0..<cols * rows).map { i -> CGPoint in
+            let x = area.minX + (CGFloat(i % cols) + CGFloat.random(in: 0.1...0.9)) * cellWidth
+            let y = area.minY + (CGFloat(i / cols) + CGFloat.random(in: 0.1...0.9)) * cellHeight
+            return CGPoint(x: x, y: y)
         }.shuffled()
 
         window.setFrame(frame, display: false)

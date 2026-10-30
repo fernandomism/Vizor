@@ -3,12 +3,18 @@ import CoreGraphics
 // Run: swiftc Sources/Gaze.swift Tests/main.swift -o /tmp/vizor-selftest && /tmp/vizor-selftest
 
 // The fit recovers a known curved map from 12 calibration dots on a jittered 4×3 grid.
-let features = (0..<12).map { i in
-    CGPoint(x: -0.1 + 0.2 * Double(i % 4) / 3 + 0.003 * Double(i % 5), y: -0.08 + 0.08 * Double(i / 4) - 0.002 * Double(i % 3))
+func gridDot(_ i: Int) -> CGPoint {
+    let x: Double = -0.1 + 0.2 * Double(i % 4) / 3 + 0.003 * Double(i % 5)
+    let y: Double = -0.08 + 0.08 * Double(i / 4) - 0.002 * Double(i % 3)
+    return CGPoint(x: x, y: y)
 }
-let truth = { (p: CGPoint) in
-    CGPoint(x: 720 + 7000 * p.x + 300 * p.y + 9000 * p.x * p.x, y: 450 - 200 * p.x + 5000 * p.y + 4000 * p.x * p.y)
+func truth(_ p: CGPoint) -> CGPoint {
+    let x = Double(p.x), y = Double(p.y)
+    let screenX: Double = 720 + 7000 * x + 300 * y + 9000 * x * x
+    let screenY: Double = 450 - 200 * x + 5000 * y + 4000 * x * y
+    return CGPoint(x: screenX, y: screenY)
 }
+let features = (0..<12).map(gridDot)
 let map = GazeMap(features: features, targets: features.map(truth))!
 for p in [CGPoint(x: 0.05, y: -0.02), CGPoint(x: -0.07, y: 0.06)] {
     let got = map.apply(p), want = truth(p)
@@ -39,7 +45,9 @@ precondition(blinks([1.0...1.01]) == [], "one closed frame is noise")
 
 // The pointer holds still through webcam jitter and moves only when the gaze really moves.
 func jitter(around p: CGPoint, _ i: Int) -> CGPoint {
-    CGPoint(x: p.x + Double(i % 5) * 8 - 16, y: p.y + Double(i % 3) * 10 - 10)
+    let dx: Double = Double(i % 5) * 8 - 16
+    let dy: Double = Double(i % 3) * 10 - 10
+    return CGPoint(x: Double(p.x) + dx, y: Double(p.y) + dy)
 }
 var hold = PointerHold()
 let start = CGPoint(x: 500, y: 500), end = CGPoint(x: 800, y: 500)
