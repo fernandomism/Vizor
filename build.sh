@@ -12,5 +12,5 @@ done
 lipo -create build/Vizor-arm64 build/Vizor-x86_64 -output "$app/Contents/MacOS/Vizor"
 cp Info.plist "$app/Contents/"
 cp -R Models/IrisLandmark.mlpackage "$app/Contents/Resources/"
-codesign --force --sign - "$app"
+codesign --force --sign "${SIGN_IDENTITY:--}" "$app"  # ad-hoc unless a signing certificate is set up
 echo "Built $app"
