@@ -13,27 +13,6 @@ jobs:
       - name: Self-test
         run: swiftc Sources/Gaze.swift Tests/main.swift -o "$RUNNER_TEMP/vizor-selftest" && "$RUNNER_TEMP/vizor-selftest"
 
-      # TEMPORARY: proves the signing path with a throwaway certificate made here. Removed once it passes.
-      - name: Signing self-check
-        run: |
-          cd "$RUNNER_TEMP"
-          cat > cert.cnf <<'EOF'
-          [req]
-          distinguished_name = dn
-          x509_extensions = ext
-          prompt = no
-          [dn]
-          CN = Vizor Signing
-          [ext]
-          basicConstraints = critical, CA:false
-          keyUsage = critical, digitalSignature
-          extendedKeyUsage = critical, codeSigning
-          EOF
-          /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 2 -config cert.cnf -keyout key.pem -out cert.pem
-          /usr/bin/openssl pkcs12 -export -inkey key.pem -in cert.pem -name "Vizor Signing" -passout pass:test -out test.p12
-          SIGNING_CERT_P12="$(base64 -i test.p12)" SIGNING_CERT_PASSWORD=test sh "$GITHUB_WORKSPACE/tools/import-signing-cert.sh"
-          rm key.pem test.p12
-
       - name: Signing certificate
         env:
           SIGNING_CERT_P12: ${{ secrets.SIGNING_CERT_P12 }}
