@@ -17,10 +17,9 @@ final class Tracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private var blinks = BlinkCounter()
     private var cursor: CGPoint?
 
-    init() throws {
-        guard let model = Bundle.main.url(forResource: "IrisLandmark", withExtension: "mlpackage"),
-              let camera = AVCaptureDevice.default(for: .video) else {
-            throw NSError(domain: "Vizor", code: 1, userInfo: [NSLocalizedDescriptionKey: "No camera or iris model found."])
+    init(camera: AVCaptureDevice) throws {
+        guard let model = Bundle.main.url(forResource: "IrisLandmark", withExtension: "mlpackage") else {
+            throw NSError(domain: "Vizor", code: 1, userInfo: [NSLocalizedDescriptionKey: "The iris model is missing from the app."])
         }
         let request = VNCoreMLRequest(model: try VNCoreMLModel(for: MLModel(contentsOf: MLModel.compileModel(at: model))))
         request.imageCropAndScaleOption = .scaleFill

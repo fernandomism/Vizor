@@ -78,7 +78,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return self.alert("Vizor needs the camera. Allow it in System Settings → Privacy & Security → Camera.")
                 }
                 do {
-                    if self.tracker == nil { self.tracker = try Tracker() }
+                    if self.tracker == nil {
+                        guard let camera = AVCaptureDevice.default(for: .video) else { return self.alert("No camera found.") }
+                        self.tracker = try Tracker(camera: camera)
+                    }
                     self.tracker?.start()
                     then()
                 } catch {
