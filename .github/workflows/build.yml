@@ -1,0 +1,26 @@
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Self-test
+        run: swiftc Sources/Gaze.swift Tests/main.swift -o "$RUNNER_TEMP/vizor-selftest" && "$RUNNER_TEMP/vizor-selftest"
+
+      - name: Build
+        run: ./build.sh
+
+      # Zip with ditto: it keeps the executable bit and code signature, which upload-artifact alone drops.
+      - name: Package
+        run: ditto -c -k --keepParent build/Vizor.app build/Vizor.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vizor
+          path: build/Vizor.zip

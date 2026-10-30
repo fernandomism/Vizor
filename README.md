@@ -3,6 +3,15 @@ Control your mouse with your eyes. Look to move the pointer, then click or right
 
 Vizor lives in the menu bar. It uses your Mac's camera, Apple's Vision framework to find your face and eyes, and Google's MediaPipe iris model (running on-device through Core ML) to find your pupils. No video leaves your Mac.
 
+## Download
+GitHub builds Vizor on every push. Open the repo's **Actions** tab, click the latest **Build** run, and download **Vizor** under Artifacts. Unzip it (twice: GitHub wraps the zip in a zip) and move `Vizor.app` to Applications. It runs on Apple Silicon and Intel Macs with macOS 13 or later.
+
+The app isn't signed with an Apple Developer ID, so the first time you open it macOS says it can't verify the app. Go to System Settings → Privacy & Security, scroll down, and click **Open Anyway**. Or run this once in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Vizor.app
+```
+
 ## Build
 Requires macOS 13 or later and the Xcode Command Line Tools (`xcode-select --install`).
 
