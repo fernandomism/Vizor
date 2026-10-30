@@ -45,7 +45,25 @@ Move `build/Vizor.app` to Applications if you want to keep it.
 - Webcam eye tracking puts the pointer in the right area, not on an exact pixel. Good, even light on your face helps the most.
 - Only the main display is supported.
 - Updating from the first version asks you to calibrate again, because calibration now saves more points.
-- Each rebuild gets a new ad-hoc signature, so macOS may forget the Accessibility permission. If the pointer stops moving after a rebuild, remove Vizor from System Settings → Privacy & Security → Accessibility and add it again.
+- Without a signing certificate (below), each build gets a new stand-in signature and macOS forgets the Accessibility permission. If it asks again even though Vizor is switched on in the list, select Vizor in System Settings → Privacy & Security → Accessibility, click −, then turn Vizor on and allow it again.
+
+## Keep permissions across updates
+macOS remembers the Accessibility permission for one exact app signature. Set up a free signing certificate once and every GitHub build is signed the same way, so updates keep the permission:
+
+1. Open **Keychain Access** (search for it with Spotlight). In the menu bar choose **Keychain Access → Certificate Assistant → Create a Certificate…**
+2. Name it **Vizor Signing**, set Identity Type to **Self-Signed Root** and Certificate Type to **Code Signing**, then click **Create**.
+3. In the **login** keychain, open **My Certificates**, right-click **Vizor Signing** → **Export "Vizor Signing"…**, choose **Personal Information Exchange (.p12)**, save it to the Desktop as `VizorSigning.p12`, and set a password.
+4. Copy the file as text:
+
+   ```bash
+   base64 -i ~/Desktop/VizorSigning.p12 | pbcopy
+   ```
+
+5. On GitHub, open the repo's **Settings → Secrets and variables → Actions** and add two repository secrets: `SIGNING_CERT_P12` (paste) and `SIGNING_CERT_PASSWORD` (the password).
+6. Delete `VizorSigning.p12` from the Desktop.
+7. Open the latest **Build** run under the repo's **Actions** tab and click **Re-run all jobs**. Install that build and allow Accessibility one last time, after removing the old Vizor entry with −.
+
+To sign local builds the same way: `SIGN_IDENTITY="Vizor Signing" ./build.sh`. The "can't verify" warning still appears once per download; only a paid Apple Developer ID removes it. Anyone who can edit this repo's workflows could use the certificate, so keep the repo's write access to people you trust.
 
 ## Self-test
 Checks the calibration math, blink counting and how the pointer holds still:
