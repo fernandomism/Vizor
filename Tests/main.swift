@@ -86,4 +86,16 @@ for i in 0..<30 { precondition(hold.update(jitter(around: end, i)) == nil, "hold
 hold.rest(at: CGPoint(x: 820, y: 500))
 precondition(hold.update(CGPoint(x: 840, y: 510)) == nil, "stays where it was put by hand")
 precondition(hold.update(CGPoint(x: 300, y: 300)) != nil, "moves again once the eyes really move")
+
+// Zoom to click magnifies the area around the pointer without leaving the screen, and maps back exactly.
+let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+precondition(ZoomRegion(around: CGPoint(x: 5, y: 5), in: screen, factor: 3).rect == CGRect(x: 0, y: 0, width: 480, height: 300),
+             "zoom stays inside the top-left corner")
+let nearEdge = ZoomRegion(around: CGPoint(x: 1430, y: 450), in: screen, factor: 3)
+precondition(nearEdge.rect.maxX == 1440 && nearEdge.rect.midY == 450, "zoom stays inside the right edge")
+let middle = ZoomRegion(around: CGPoint(x: 720, y: 450), in: screen, factor: 3)
+precondition(middle.unzoom(CGPoint(x: 720, y: 450), in: screen) == CGPoint(x: 720, y: 450), "the zoomed center is the real center")
+precondition(middle.unzoom(CGPoint(x: 0, y: 0), in: screen) == middle.rect.origin, "the zoomed corner is the region's corner")
+precondition(middle.unzoom(CGPoint(x: 1440, y: 900), in: screen) == CGPoint(x: middle.rect.maxX, y: middle.rect.maxY),
+             "the far zoomed corner is the region's far corner")
 print("selftest ok")

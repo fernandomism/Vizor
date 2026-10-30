@@ -3,6 +3,7 @@ import Carbon.HIToolbox
 
 /// Shows red dots around the screen. Look at each one and tap Space: the gaze from just before
 /// the tap is saved for that spot and the dot turns green. The last 4 dots check the accuracy.
+/// Training is the long version: 96 dots plus the 4 checks.
 final class Calibration {
     private static let checks = 4
     private let window = KeyWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
@@ -18,15 +19,17 @@ final class Calibration {
     private var recent: [(time: TimeInterval, gaze: Gaze, open: Double)] = []
     private var monitor: Any?
     private var saving = false
+    private let training: Bool
 
     /// `done` gets the samples (nil if it failed), the open-eye baseline used to detect blinks,
     /// and the average miss on the check dots in points.
-    init(tracker: Tracker, done: @escaping ([GazeSample]?, Double, Double) -> Void) {
+    init(tracker: Tracker, training: Bool = false, done: @escaping ([GazeSample]?, Double, Double) -> Void) {
         self.tracker = tracker
+        self.training = training
         self.done = done
         let frame = NSScreen.screens[0].frame  // shortcut: main display only, calibrate per display for multi-monitor
-        // One random spot in each cell of a 4×3 grid: center, halfway and edges, in shuffled order.
-        let area = frame.insetBy(dx: 30, dy: 30), cols = 4, rows = 3
+        // One random spot in each cell of a grid (4×3, or 12×8 for training): center, halfway and edges, shuffled.
+        let area = frame.insetBy(dx: 30, dy: 30), cols = training ? 12 : 4, rows = training ? 8 : 3
         let cellWidth = area.width / CGFloat(cols), cellHeight = area.height / CGFloat(rows)
         spots = (0..<cols * rows).map { i -> CGPoint in
             let x = area.minX + (CGFloat(i % cols) + CGFloat.random(in: 0.1...0.9)) * cellWidth
@@ -65,12 +68,15 @@ final class Calibration {
         show()
     }
 
-    /// Closes without saving anything.
-    func cancel() {
+    /// Closes the dots. Returns what was saved so far when that's enough to steer with (12 or more),
+    /// so stopping a long training partway doesn't waste it.
+    @discardableResult
+    func cancel() -> (samples: [GazeSample], open: Double)? {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         tracker.onSample = nil
         window.orderOut(nil)
+        return saved.count >= 12 ? (saved, median(open)) : nil
     }
 
     private var checking: Bool { saved.count >= spots.count - Calibration.checks }
@@ -83,7 +89,8 @@ final class Calibration {
             let n = saved.count - (spots.count - Calibration.checks) + 1
             say("Checking accuracy: look at the red dot and tap Space (\(n) of \(Calibration.checks)) · Esc stops")
         } else {
-            say("Look at the red dot and tap Space (\(saved.count + 1) of \(spots.count - Calibration.checks)) · Esc stops")
+            let hint = training ? " · Move your head a little now and then" : ""
+            say("Look at the red dot and tap Space (\(saved.count + 1) of \(spots.count - Calibration.checks))\(hint) · Esc stops")
         }
     }
 

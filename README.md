@@ -27,9 +27,10 @@ Move `build/Vizor.app` to Applications if you want to keep it.
 
 ## Use
 - **Click the eye icon** in the menu bar (or press **⌃⌥E**) to turn tracking on or off. The icon shows an eye when on and a crossed-out eye when off.
-- **Right-click the icon** (or control-click) for **Calibrate…**, **Settings…** and **Quit**.
+- **Right-click the icon** (or control-click) for **Calibrate…**, **Train (100 dots)…**, **Settings…** and **Quit**.
 - The first time you turn it on, macOS asks for **Camera** and **Accessibility** access. Accessibility is what lets Vizor move the pointer and click. After allowing Accessibility in System Settings, click the icon again.
 - **Calibration** runs the first time: 12 red dots appear one at a time around the screen. Look at each dot and **tap Space**. The dot turns green ("Saved") and the next one appears. 4 more dots then check the accuracy and show it in points (lower is better). Recalibrate whenever you change your seat, screen or lighting.
+- **Training** is the long calibration: 96 dots plus the 4 accuracy checks, about 3 minutes. Move your head a little now and then so it learns how that shifts things. If you stop partway with Esc, the dots you've done are kept.
 - **It learns as you use it.** Every real mouse or trackpad click teaches Vizor where you were looking. So does correcting it: if the pointer lands in the wrong spot, move it by hand to where you're looking and let go. It also learns how moving your head shifts things. Settings shows how accurate it's been at your recent clicks.
 - **The pointer stays put** until your eyes really move. Small eye flicks and camera noise are ignored. If you move the pointer with your mouse or trackpad, it stays where you put it until you look somewhere else.
 - **Esc always stops Vizor**, from any app: the pointer, the camera and any calibration in progress.
@@ -41,6 +42,7 @@ Move `build/Vizor.app` to Applications if you want to keep it.
 - **Hold still within**: how far your eyes must move (in points) before the pointer follows. Raise it if the pointer still wanders, lower it if small moves are ignored.
 - **Blink sensitivity**: raise it if blinks aren't detected, lower it if looking down causes clicks.
 - **Time between blinks**: how long Vizor waits for the next blink before deciding it was a double or triple blink.
+- **Zoom to click (experimental, macOS 14+)**: blinking twice magnifies the area you're looking at instead of clicking. Look at the target in the magnified view and blink twice again to click it (three times to right-click). Small buttons become big targets, which makes up for webcam inaccuracy. It needs the Screen Recording permission to take the picture it magnifies; **Zoom level** sets how much.
 
 ## Good to know
 - Webcam eye tracking puts the pointer in the right area, not on an exact pixel. Good, even light on your face and sitting a little closer help the most. Vizor uses your camera at 1080p when it can and turns off Center Stage while it runs.
@@ -67,7 +69,7 @@ macOS remembers the Accessibility permission for one exact app signature. Set up
 To sign local builds the same way: `SIGN_IDENTITY="Vizor Signing" ./build.sh`. The "can't verify" warning still appears once per download; only a paid Apple Developer ID removes it. Anyone who can edit this repo's workflows could use the certificate, so keep the repo's write access to people you trust.
 
 ## Self-test
-Checks the gaze model (calibration, learning from clicks, head movement, ignoring stray clicks), blink counting and how the pointer holds still:
+Checks the gaze model (calibration, learning from clicks, head movement, ignoring stray clicks), blink counting, how the pointer holds still and the zoom-to-click math:
 
 ```bash
 swiftc Sources/Gaze.swift Tests/main.swift -o /tmp/vizor-selftest && /tmp/vizor-selftest

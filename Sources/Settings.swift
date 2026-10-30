@@ -12,8 +12,11 @@ struct SettingsView: View {
     @AppStorage("hotKeyName") private var keyName = "E"
     @AppStorage("calibrationAccuracy") private var calibrationAccuracy = 0.0
     @AppStorage("recentAccuracy") private var recentAccuracy = 0.0
+    @AppStorage("zoomToClick") private var zoomToClick = false
+    @AppStorage("zoomLevel") private var zoomLevel = 3.0
     @State private var monitor: Any?  // set while recording a shortcut
     let recalibrate: () -> Void
+    let train: () -> Void
     let shortcutChanged: () -> Void
 
     var body: some View {
@@ -35,10 +38,31 @@ struct SettingsView: View {
                          : "about \(Int(calibrationAccuracy)) points after calibrating; it improves as you click")
                 }
             }
-            Button("Recalibrate…", action: recalibrate)
+            HStack {
+                Button("Recalibrate…", action: recalibrate)
+                Button("Train (100 dots)…", action: train)
+            }
+            Toggle("Zoom to click (experimental)", isOn: $zoomToClick)
+                .disabled(!zoomSupported)
+                .onChange(of: zoomToClick) { on in
+                    if on { CGRequestScreenCaptureAccess() }  // magnifying needs a picture of the screen
+                }
+            if zoomToClick {
+                Slider(value: $zoomLevel, in: 2...5, step: 1) { Text("Zoom level (\(Int(zoomLevel))×)") }
+            }
+            Text(zoomSupported
+                 ? "Blink twice to magnify the area you're looking at, then blink twice on the target to click. Needs the Screen Recording permission."
+                 : "Zoom to click needs macOS 14 or newer.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(20)
         .frame(width: 420)
+    }
+
+    private var zoomSupported: Bool {
+        if #available(macOS 14.0, *) { return true }
+        return false
     }
 
     private var shortcut: String {

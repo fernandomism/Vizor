@@ -7,6 +7,9 @@ import Vision
 final class Tracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     /// Each frame's look and eye openness, delivered on the main thread. Used by calibration.
     var onSample: ((Gaze, Double) -> Void)?
+    /// A double (2) or triple (3) blink and where the pointer was, on the main thread. The app decides
+    /// whether that clicks or opens zoom to click.
+    var onBlinks: ((Int, CGPoint) -> Void)?
 
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "vizor.camera")
@@ -23,6 +26,7 @@ final class Tracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private var cursor: CGPoint?  // where Vizor last put the pointer
     private var eyeMovedAt = 0.0, handMovedAt = 0.0, clickedAt = 0.0
     private var correcting = false  // you're moving the pointer by hand to fix where Vizor put it
+    private var zoomed = false  // the zoom view is up, so the pointer isn't over the real screen
 
     init(camera: AVCaptureDevice) throws {
         guard let model = Bundle.main.url(forResource: "IrisLandmark", withExtension: "mlpackage") else {
@@ -62,6 +66,9 @@ final class Tracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         }
     }
 
+    /// While zoomed, where you look and where the pointer is don't match the real screen: don't learn.
+    func setZoomed(_ on: Bool) { queue.async { self.zoomed = on } }
+
     /// A real mouse or trackpad click: you were almost certainly looking where you clicked.
     func userClicked() {
         queue.async {
@@ -75,7 +82,7 @@ final class Tracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private func learn(at target: CGPoint) {
         let now = ProcessInfo.processInfo.systemUptime
         let looks = history.filter { now - $0.time <= 0.5 }.map { $0.gaze }
-        guard let model, looks.count >= 5 else { return }
+        guard let model, looks.count >= 5, !zoomed else { return }
         let sample = GazeSample(gaze: medianGaze(looks), target: target, learned: true)
         errors = Array((errors + [model.error(sample)]).suffix(20))
         // Keep every calibration dot and the 80 most recent learned samples.
@@ -116,7 +123,9 @@ final class Tracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         let settings = UserDefaults.standard
         blinks.window = settings.double(forKey: "blinkWindow")
         let closed = open < settings.double(forKey: "blinkThreshold") * settings.double(forKey: "openBaseline")
-        if let n = blinks.update(closed: closed, at: now) { click(n) }
+        if let n = blinks.update(closed: closed, at: now), n == 2 || n == 3, let at = CGEvent(source: nil)?.location {
+            DispatchQueue.main.async { self.onBlinks?(n, at) }
+        }
         guard !blinks.pending else { return }  // hold the pointer still so the click lands where you looked
 
         let target = model.apply(look), keep = CGFloat(settings.double(forKey: "smoothing"))
@@ -168,13 +177,18 @@ final class Tracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         return Double((y1 - y0) / (x1 - x0))
     }
 
-    private func click(_ count: Int) {
-        guard count == 2 || count == 3, let at = CGEvent(source: nil)?.location else { return }
-        clickedAt = ProcessInfo.processInfo.systemUptime
-        let (down, up, button): (CGEventType, CGEventType, CGMouseButton) =
-            count == 2 ? (.leftMouseDown, .leftMouseUp, .left) : (.rightMouseDown, .rightMouseUp, .right)
-        for type in [down, up] {
-            CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: at, mouseButton: button)?.post(tap: .cghidEventTap)
+    /// Left click for a double blink, right click for a triple, at `point`. The pointer then stays
+    /// there until your eyes really move, and the click isn't learned from.
+    func click(_ count: Int, at point: CGPoint) {
+        queue.async {
+            self.clickedAt = ProcessInfo.processInfo.systemUptime
+            let (down, up, button): (CGEventType, CGEventType, CGMouseButton) =
+                count == 2 ? (.leftMouseDown, .leftMouseUp, .left) : (.rightMouseDown, .rightMouseUp, .right)
+            for type in [CGEventType.mouseMoved, down, up] {
+                CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button)?.post(tap: .cghidEventTap)
+            }
+            self.cursor = point
+            if let aim = self.aim { self.hold.rest(at: aim) }
         }
     }
 }

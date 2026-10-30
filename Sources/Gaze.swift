@@ -180,3 +180,23 @@ struct PointerHold {
 }
 
 private func distance(_ a: CGPoint, _ b: CGPoint) -> Double { Double(hypot(a.x - b.x, a.y - b.y)) }
+
+/// The part of the screen that zoom to click magnifies: the area around `center`, sized screen ÷ factor
+/// and kept inside the screen. Points are in pointer coordinates (top-left origin).
+struct ZoomRegion {
+    let rect: CGRect
+    let factor: CGFloat
+
+    init(around center: CGPoint, in screen: CGRect, factor: CGFloat) {
+        let size = CGSize(width: screen.width / factor, height: screen.height / factor)
+        let x = min(max(center.x - size.width / 2, screen.minX), screen.maxX - size.width)
+        let y = min(max(center.y - size.height / 2, screen.minY), screen.maxY - size.height)
+        rect = CGRect(origin: CGPoint(x: x, y: y), size: size)
+        self.factor = factor
+    }
+
+    /// The real spot on screen under `point` on the magnified view, which fills `screen`.
+    func unzoom(_ point: CGPoint, in screen: CGRect) -> CGPoint {
+        CGPoint(x: rect.minX + (point.x - screen.minX) / factor, y: rect.minY + (point.y - screen.minY) / factor)
+    }
+}
