@@ -1,0 +1,6 @@
+IrisLandmark.mlpackage is Google's MediaPipe iris landmark model
+(https://storage.googleapis.com/mediapipe-assets/iris_landmark.tflite), licensed under the
+Apache License 2.0 (see LICENSE-mediapipe.txt).
+
+Changes: converted from TensorFlow Lite to Core ML with tools/convert_iris.py, with only the
+iris output kept (the eye contour output was dropped) and weights stored as 16-bit floats.
